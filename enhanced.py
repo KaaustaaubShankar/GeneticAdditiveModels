@@ -481,7 +481,7 @@ if __name__ == "__main__":
     print("RUNNING IMPROVED GA-GAM")
     print("=" * 60)
     
-    improved_results = improved_main(seeds=[42, 7, 123], population_size=80, n_generations=80)
+    improved_results = improved_main(seeds=[42, 7, 123,225,729], population_size=80, n_generations=50)
     
     # Print final summary
     print("\n" + "=" * 60)

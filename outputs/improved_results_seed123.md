@@ -1,8 +1,8 @@
 # Improved Run results — seed 123
 
-- Date (UTC): 2025-11-25T00:38:01.356278Z
+- Date (UTC): 2025-11-25T20:03:20.551977Z
 
-- Improved GA-GAM Final Test RMSE: 0.6365
+- Improved GA-GAM Final Test RMSE: 0.6503
 
 - Decision Tree Test RMSE: 0.6961
 
@@ -116,66 +116,6 @@
 
 | 50 | -0.673181 | -inf |
 
-| 51 | -0.673181 | -inf |
-
-| 52 | -0.665668 | -inf |
-
-| 53 | -0.665668 | -inf |
-
-| 54 | -0.658110 | -inf |
-
-| 55 | -0.659370 | -inf |
-
-| 56 | -0.659370 | -inf |
-
-| 57 | -0.656639 | -inf |
-
-| 58 | -0.654507 | -inf |
-
-| 59 | -0.654507 | -inf |
-
-| 60 | -0.654507 | -inf |
-
-| 61 | -0.654507 | -inf |
-
-| 62 | -0.654471 | -inf |
-
-| 63 | -0.654471 | -inf |
-
-| 64 | -0.654471 | -inf |
-
-| 65 | -0.654471 | -inf |
-
-| 66 | -0.654471 | -inf |
-
-| 67 | -0.654471 | -inf |
-
-| 68 | -0.654471 | -inf |
-
-| 69 | -0.654471 | -inf |
-
-| 70 | -0.654471 | -inf |
-
-| 71 | -0.654391 | -inf |
-
-| 72 | -0.654391 | -inf |
-
-| 73 | -0.654391 | -0.656159 |
-
-| 74 | -0.654341 | -inf |
-
-| 75 | -0.654341 | -inf |
-
-| 76 | -0.654341 | -inf |
-
-| 77 | -0.654335 | -inf |
-
-| 78 | -0.654335 | -inf |
-
-| 79 | -0.654335 | -inf |
-
-| 80 | -0.654335 | -inf |
-
 
 ## Model Structure Summary
 
@@ -189,7 +129,7 @@
 
 - **Population**: none
 
-- **AveOccup**: spline
+- **AveOccup**: none
 
 - **Latitude**: spline
 
@@ -230,15 +170,15 @@
   },
   {
     "type": "spline",
-    "scale": true,
-    "knots": 10,
-    "lambda": 0.16655994877253086
+    "scale": false,
+    "knots": 11,
+    "lambda": 0.18082692952923468
   },
   {
     "type": "spline",
     "scale": true,
-    "knots": 13,
-    "lambda": 0.37182531370338967
+    "knots": 20,
+    "lambda": 2.436235613883105
   },
   {
     "type": "none",
@@ -247,10 +187,10 @@
     "lambda": null
   },
   {
-    "type": "spline",
+    "type": "none",
     "scale": false,
-    "knots": 17,
-    "lambda": 0.9878797011990934
+    "knots": null,
+    "lambda": null
   },
   {
     "type": "spline",
@@ -260,9 +200,9 @@
   },
   {
     "type": "spline",
-    "scale": true,
+    "scale": false,
     "knots": 20,
-    "lambda": 1.6066667457411437
+    "lambda": 1.8579044558364881
   }
 ]
 ```
