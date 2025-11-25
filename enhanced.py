@@ -5,7 +5,7 @@ import random
 import numpy as np
 from copy import deepcopy
 from sklearn.datasets import fetch_california_housing
-from sklearn.model_selection import train_test_split, KFold
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error
 from pygam import LinearGAM, s
@@ -20,51 +20,63 @@ from datetime import datetime
 from typing import List, Optional
 
 os.makedirs("outputs", exist_ok=True)
+
 # ------------------------------
-# 2. GAM Chromosome
+# 2. Improved GAM Chromosome
 # ------------------------------
 COMPONENT_TYPES = ["none", "linear", "spline"]
 
-class GAMChromosome:
+class ImprovedGAMChromosome:
     """
-    Chromosome encoding for univariate regression GAM.
-    Each feature is a gene with component type and hyperparameters.
+    Enhanced chromosome encoding for univariate regression GAM.
     """
-    def __init__(self, n_features, max_knots=10):
+    def __init__(self, n_features, max_knots=20):
         self.genes = []
         self.n_features = n_features
         self.max_knots = max_knots
-        self._initialize_random()
+        self._initialize_smart()
 
-    def _initialize_random(self):
+    def _initialize_smart(self):
+        """Smarter initialization biased towards useful configurations"""
         self.genes = []
         for _ in range(self.n_features):
-            component_type = random.choice(COMPONENT_TYPES)
+            # Bias initialization: prefer splines, then linear, then none
+            weights = [0.2, 0.3, 0.5]  # [none, linear, spline]
+            component_type = random.choices(COMPONENT_TYPES, weights=weights)[0]
+            
             gene = {
                 "type": component_type,
-                "knots": random.randint(4, self.max_knots) if component_type == "spline" else None,
-                "lambda": random.uniform(0.001, 1.0) if component_type == "spline" else None,
+                "knots": random.randint(8, self.max_knots) if component_type == "spline" else None,
+                "lambda": random.uniform(0.1, 10.0) if component_type == "spline" else None,
                 "scale": random.choice([True, False])
             }
             self.genes.append(gene)
 
-    def mutate(self, mutation_rate=0.2):
+    def mutate(self, mutation_rate=0.15, generation=0, max_generations=100):
+        """Adaptive mutation that decreases over time"""
+        adaptive_rate = mutation_rate * (1 - generation / max_generations)
+        
         for gene in self.genes:
-            if random.random() < mutation_rate:
-                # Randomly change component type
-                gene["type"] = random.choice(COMPONENT_TYPES)
-                if gene["type"] == "spline":
-                    gene["knots"] = random.randint(4, self.max_knots)
-                    gene["lambda"] = random.uniform(0.001, 1.0)
-                else:
-                    gene["knots"] = None
-                    gene["lambda"] = None
+            if random.random() < adaptive_rate:
+                if random.random() < 0.7:  # 70% chance to change type
+                    gene["type"] = random.choice(COMPONENT_TYPES)
+                    if gene["type"] == "spline":
+                        gene["knots"] = random.randint(8, self.max_knots)
+                        gene["lambda"] = random.uniform(0.1, 10.0)
+                    else:
+                        gene["knots"] = None
+                        gene["lambda"] = None
+                else:  # 30% chance to tweak hyperparameters
+                    if gene["type"] == "spline":
+                        # Small perturbations
+                        gene["knots"] = max(4, min(self.max_knots, 
+                                                 gene["knots"] + random.randint(-2, 2)))
+                        gene["lambda"] = max(0.001, gene["lambda"] * random.uniform(0.8, 1.2))
                 gene["scale"] = random.choice([True, False])
 
-    def crossover(self, other, swap_prob=0.5):
+    def crossover(self, other, swap_prob=0.3):
         """
-        Uniform crossover at the gene *and* hyperparameter level.
-        Each gene field (type, knots, lambda, scale) can be swapped independently.
+        Uniform crossover with lower swap probability for more conservative mixing.
         """
         child1_genes = []
         child2_genes = []
@@ -120,211 +132,176 @@ class GAMChromosome:
             # If one or both children became spline while parent wasn't spline
             # reinitialize parameters safely
             if new_g1["type"] == "spline" and new_g1["knots"] is None:
-                new_g1["knots"] = random.randint(4, self.max_knots)
-                new_g1["lambda"] = random.uniform(0.001, 1.0)
+                new_g1["knots"] = random.randint(8, self.max_knots)
+                new_g1["lambda"] = random.uniform(0.1, 10.0)
 
             if new_g2["type"] == "spline" and new_g2["knots"] is None:
-                new_g2["knots"] = random.randint(4, self.max_knots)
-                new_g2["lambda"] = random.uniform(0.001, 1.0)
+                new_g2["knots"] = random.randint(8, self.max_knots)
+                new_g2["lambda"] = random.uniform(0.1, 10.0)
 
             # Append to the child gene lists
             child1_genes.append(new_g1)
             child2_genes.append(new_g2)
 
-        # Create child chromosomes
-        child1 = GAMChromosome(self.n_features)
-        child2 = GAMChromosome(self.n_features)
+        # Create child chromosomes using the same class
+        child1 = self.__class__(self.n_features, self.max_knots)
+        child2 = self.__class__(self.n_features, self.max_knots)
         child1.genes = child1_genes
         child2.genes = child2_genes
         return child1, child2
 
-# ------------------------------
-# 3. GAM Builder
-# ------------------------------
-class GAMBuilder:
+class ImprovedGAMBuilder:
     @staticmethod
-    def build(chromosome):
+    def build(chromosome, max_total_knots=100):
+        """Build GAM with constraints on total complexity"""
         terms = None
+        total_knots = 0
+        
         for i, gene in enumerate(chromosome.genes):
             if gene["type"] == "none":
                 continue
+                
             elif gene["type"] == "linear":
                 # Use minimal splines + high lambda to mimic linear
-                term = s(i, n_splines=4, lam=1e5)
+                term = s(i, n_splines=2, lam=1000.0)
+                
             elif gene["type"] == "spline":
-                term = s(i, n_splines=gene["knots"], lam=gene["lambda"])
+                # Constrain total knots to prevent overfitting
+                available_knots = min(gene["knots"], max_total_knots - total_knots)
+                if available_knots >= 4:  # Minimum sensible knots
+                    term = s(i, n_splines=available_knots, lam=gene["lambda"])
+                    total_knots += available_knots
+                else:
+                    continue  # Skip if not enough knots available
+                    
             if terms is None:
                 terms = term
             else:
                 terms += term
+                
         if terms is None:
-            # No active features, fallback to simple constant
-            gam = LinearGAM()
-        else:
-            gam = LinearGAM(terms)
+            # Fallback: use linear terms for all features
+            terms = s(0, n_splines=2, lam=1000.0)
+            for i in range(1, chromosome.n_features):
+                terms += s(i, n_splines=2, lam=1000.0)
+                
+        gam = LinearGAM(terms)
         return gam
 
-class GAMFitnessEvaluator:
+# ------------------------------
+# 4. Improved Fitness Evaluator
+# ------------------------------
+class ImprovedGAMFitnessEvaluator:
     @staticmethod
-    def _safe_index(arr, idx):
-        """Use .iloc when arr is a pandas DataFrame/Series, else numpy indexing."""
-        if hasattr(arr, "iloc"):
-            return arr.iloc[idx]
-        return arr[idx]
-
-    @staticmethod
-    def evaluate(
-        chromosome,
-        X_train,
-        y_train,
-        X_val=None,      # unused now
-        y_val=None,      # unused now
-        complexity_alpha=0.02,
-        complexity_beta=0.001,
-        complexity_gamma=0.1,
-        k_folds=3,
-        lambda_factors=(0.5, 1.0, 2.0),
-        local_lambda_refinement=True,
-    ):
+    def evaluate(chromosome, X_train, y_train, X_val, y_val, 
+                 n_repeats=2, cv_folds=3):
         """
-        Cross-validated RMSE with optional local λ optimization around the chromosome's λ.
-        Fitness = −(mean_rmse + complexity penalties)
+        Improved fitness evaluation with cross-validation and AIC-like penalty
         """
-
-        # Combine train+val for internal CV
-        X = GAMFitnessEvaluator._safe_index(X_train, slice(None))
-        y = GAMFitnessEvaluator._safe_index(y_train, slice(None))
-
-        # ----------------------------------------
-        # Helper: score a single CV run
-        # ----------------------------------------
-        def score_single_cv():
-            kf = KFold(n_splits=k_folds, shuffle=True, random_state=random.randint(0, 999999))
-
-            fold_rmses = []
-
-            for tr_idx, val_idx in kf.split(X):
-                Xtr = GAMFitnessEvaluator._safe_index(X, tr_idx)
-                Xv  = GAMFitnessEvaluator._safe_index(X, val_idx)
-                ytr = GAMFitnessEvaluator._safe_index(y, tr_idx)
-                yv  = GAMFitnessEvaluator._safe_index(y, val_idx)
-
-                # Copy chromosome (so we can refine lambda)
-                chrom_local = deepcopy(chromosome)
-
-                # ----------------------------------------
-                # Local λ refinement
-                # ----------------------------------------
-                if local_lambda_refinement:
-                    for i, gene in enumerate(chrom_local.genes):
-                        if gene["type"] != "spline":
-                            continue
-
-                        base_lambda = gene.get("lambda", 0.1) or 0.1
-                        best_lambda = base_lambda
-                        best_rmse = float("inf")
-
-                        # Grid search over λ * factors
-                        for f in lambda_factors:
-                            lam_candidate = max(1e-6, base_lambda * f)
-
-                            gene_try = deepcopy(gene)
-                            gene_try["lambda"] = lam_candidate
-
-                            chrom_try = deepcopy(chrom_local)
-                            chrom_try.genes[i] = gene_try
-
-                            try:
-                                gam_tmp = GAMBuilder.build(chrom_try)
-                                gam_tmp.fit(Xtr, ytr)
-                                preds_tmp = gam_tmp.predict(Xv)
-                                rmse_tmp = np.sqrt(mean_squared_error(yv, preds_tmp))
-                            except Exception:
-                                rmse_tmp = float("inf")
-
-                            if rmse_tmp < best_rmse:
-                                best_rmse = rmse_tmp
-                                best_lambda = lam_candidate
-
-                        chrom_local.genes[i]["lambda"] = best_lambda
-
-                # ----------------------------------------
-                # Evaluate fold with refined chromosome
-                # ----------------------------------------
-                try:
-                    gam = GAMBuilder.build(chrom_local)
-                    gam.fit(Xtr, ytr)
-                    preds = gam.predict(Xv)
-                    rmse = np.sqrt(mean_squared_error(yv, preds))
-                except Exception:
-                    rmse = float("inf")
-
-                fold_rmses.append(rmse)
-
-            fold_rmses = np.array(fold_rmses)
-            return fold_rmses.mean(), fold_rmses.std()
-
-        # ----------------------------------------
-        # Run CV twice for robustness
-        # ----------------------------------------
-        rmse_means = []
-        rmse_stds  = []
-
-        for _ in range(2):  # 2 repeats
-            m, s = score_single_cv()
-            rmse_means.append(m)
-            rmse_stds.append(s)
-
-        mean_rmse = float(np.mean(rmse_means))
-        std_rmse  = float(np.mean(rmse_stds))
-
-        # ----------------------------------------
-        # Complexity penalties
-        # ----------------------------------------
-        active_features = sum(1 for g in chromosome.genes if g["type"] != "none")
-        total_knots = sum((g.get("knots") or 0) for g in chromosome.genes if g["type"] == "spline")
-
-        complexity_penalty = (
-            complexity_alpha * active_features
-            + complexity_beta * total_knots
-            + complexity_gamma * std_rmse
-        )
-
-        fitness = -(mean_rmse + complexity_penalty)
-
-        if not np.isfinite(fitness):
-            fitness = -1e12
-
-        return fitness
-
+        # Use cross-validation for more robust evaluation
+        fold_scores = []
+        X_combined = np.vstack([X_train, X_val])
+        y_combined = np.hstack([y_train, y_val])
+        
+        n_samples = len(X_combined)
+        fold_size = n_samples // cv_folds
+        
+        for fold in range(cv_folds):
+            val_start = fold * fold_size
+            val_end = (fold + 1) * fold_size if fold < cv_folds - 1 else n_samples
+            
+            # Create train/val splits
+            X_val_fold = X_combined[val_start:val_end]
+            X_train_fold = np.delete(X_combined, slice(val_start, val_end), axis=0)
+            y_val_fold = y_combined[val_start:val_end]
+            y_train_fold = np.delete(y_combined, slice(val_start, val_end))
+            
+            try:
+                gam = ImprovedGAMBuilder.build(chromosome)
+                gam.fit(X_train_fold, y_train_fold)
+                preds = gam.predict(X_val_fold)
+                rmse = np.sqrt(mean_squared_error(y_val_fold, preds))
+                
+                # Calculate AIC-like penalty based on model complexity
+                n_splines_total = 0
+                for term in gam.terms:
+                    if hasattr(term, 'n_splines'):
+                        n_splines_total += term.n_splines
+                
+                # Approximate effective parameters (degrees of freedom)
+                effective_params = gam.statistics_['edof']
+                
+                # AIC-like penalty
+                aic_penalty = (2 * effective_params) / len(X_val_fold)
+                
+                # Final fitness (higher is better)
+                fold_score = -rmse - aic_penalty
+                fold_scores.append(fold_score)
+                
+            except Exception as e:
+                fold_scores.append(-np.inf)
+        
+        return np.mean(fold_scores)
 
 # ------------------------------
-# 5. GA Setup with DEAP
+# 5. Improved GA Setup with DEAP
 # ------------------------------
-def setup_deap(n_features, X_train, y_train, X_val, y_val, population_size=300):
-    # DEAP creator should only create classes once; guard against re-creation
-    try:
-        creator.create("FitnessMax", base.Fitness, weights=(1.0,))
-    except Exception:
-        pass
-    try:
-        creator.create("Individual", GAMChromosome, fitness=creator.FitnessMax)
-    except Exception:
-        pass
+def setup_improved_deap(n_features, X_train, y_train, X_val, y_val, population_size=80):
+    # Clean up existing classes to avoid conflicts
+    if hasattr(creator, 'FitnessMax'):
+        del creator.FitnessMax
+    if hasattr(creator, 'Individual'):
+        del creator.Individual
+
+    # DEAP creator setup
+    creator.create("FitnessMax", base.Fitness, weights=(1.0,))
+    creator.create("Individual", ImprovedGAMChromosome, fitness=creator.FitnessMax)
 
     toolbox = base.Toolbox()
     toolbox.register("individual", creator.Individual, n_features=n_features)
     toolbox.register("population", tools.initRepeat, list, toolbox.individual)
 
     def evaluate(ind):
-        return (GAMFitnessEvaluator.evaluate(ind, X_train, y_train, X_val, y_val),)
+        return (ImprovedGAMFitnessEvaluator.evaluate(ind, X_train, y_train, X_val, y_val),)
 
     toolbox.register("evaluate", evaluate)
-    toolbox.register("mate", lambda ind1, ind2: ind1.crossover(ind2))
-    toolbox.register("mutate", lambda ind: ind.mutate(mutation_rate=0.2))
-    toolbox.register("select", tools.selTournament, tournsize=3)
+    toolbox.register("mate", lambda ind1, ind2: ind1.crossover(ind2, swap_prob=0.3))
+    
+    def mutate_individual(individual, generation=0, max_generations=100):
+        individual.mutate(mutation_rate=0.15, generation=generation, max_generations=max_generations)
+        return individual,
+    
+    toolbox.register("mutate", mutate_individual)
+    toolbox.register("select", tools.selTournament, tournsize=5)
 
     return toolbox
+
+def run_improved_ga(toolbox, population_size=80, n_generations=80):
+    """Run improved GA with better strategy"""
+    population = toolbox.population(n=population_size)
+    
+    # Statistics for tracking
+    stats = tools.Statistics(lambda ind: ind.fitness.values[0])
+    stats.register("avg", np.mean)
+    stats.register("min", np.min)
+    stats.register("max", np.max)
+    
+    # Hall of fame to keep best individuals
+    hof = tools.HallOfFame(1)
+    
+    # Use eaSimple with custom parameters
+    final_pop, logbook = algorithms.eaSimple(
+        population, 
+        toolbox,
+        cxpb=0.7,  # Crossover probability
+        mutpb=0.2,  # Mutation probability
+        ngen=n_generations,
+        stats=stats,
+        halloffame=hof,
+        verbose=True
+    )
+    
+    return final_pop, logbook, hof
 
 def summarize_structure(chromosome, gam_model, feature_names):
     """
@@ -355,13 +332,8 @@ def summarize_structure(chromosome, gam_model, feature_names):
                 term_idx += 1
     return summary
 
-
-def main(seeds: Optional[List[int]] = None, population_size: int = 300, n_generations: int = 50):
-    """Run the GA once per seed in `seeds` and save per-seed and aggregate md.
-
-    - If `SEEDS` env var is provided it will be parsed as comma-separated ints.
-    - Otherwise `seeds` or default [42] will be used.
-    """
+def improved_main(seeds: Optional[List[int]] = None, population_size: int = 80, n_generations: int = 80):
+    """Run the improved GA once per seed in `seeds` and save per-seed and aggregate md."""
     # Determine seeds from env or function arg
     env_seeds = os.environ.get("SEEDS")
     if env_seeds:
@@ -372,14 +344,14 @@ def main(seeds: Optional[List[int]] = None, population_size: int = 300, n_genera
         seeds_list = [42]
 
     aggregate_rows = []
-    aggregate_path = "outputs/results_all_seeds.md"
+    aggregate_path = "outputs/improved_results_all_seeds.md"
 
     # Feature names (California housing)
     feature_names = ["MedInc", "HouseAge", "AveRooms", "AveBedrms", 
                     "Population", "AveOccup", "Latitude", "Longitude"]
 
     for SEED in seeds_list:
-        print(f"\n=== Running seed {SEED} ===")
+        print(f"\n=== Running improved GA for seed {SEED} ===")
         set_global_seed(SEED)
 
         # Load data
@@ -387,59 +359,39 @@ def main(seeds: Optional[List[int]] = None, population_size: int = 300, n_genera
         X_train, X_val, X_test, y_train, y_val, y_test = dataset.get_splits()
         n_features = X_train.shape[1]
 
-        # Setup DEAP
-        toolbox = setup_deap(n_features, X_train, y_train, X_val, y_val, population_size=population_size)
-        population = toolbox.population(n=population_size)
-
-        # Run GA
-        NGEN = n_generations
-        gen_logs = []
-        for gen in range(NGEN):
-            # Evaluate fitness
-            fitnesses = list(map(toolbox.evaluate, population))
-            for ind, fit in zip(population, fitnesses):
-                ind.fitness.values = fit
-
-            # Selection
-            offspring = toolbox.select(population, len(population))
-            offspring = list(map(deepcopy, offspring))
-
-            # Crossover
-            for i in range(0, len(offspring), 2):
-                if i+1 < len(offspring):
-                    child1, child2 = offspring[i].crossover(offspring[i+1])
-                    offspring[i].genes, offspring[i+1].genes = child1.genes, child2.genes
-
-            # Mutation
-            for ind in offspring:
-                ind.mutate(mutation_rate=0.2)
-
-            population[:] = offspring
-
-            # Logging best fitness
-            best = max(population, key=lambda ind: ind.fitness.values)
-            best_f = float(best.fitness.values[0]) if best.fitness.values is not None else float("nan")
-            gen_logs.append((gen + 1, best_f))
-            print(f"Gen {gen+1} Best fitness: {best_f:.4f}")
-
-        # Build final GAM from best chromosome
-        best_chrom = max(population, key=lambda ind: ind.fitness.values)
-        best_gam = GAMBuilder.build(best_chrom)
-        best_gam.fit(np.vstack([X_train, X_val]), np.hstack([y_train, y_val]))
+        # Setup improved DEAP
+        toolbox = setup_improved_deap(n_features, X_train, y_train, X_val, y_val, population_size)
+        
+        # Run improved GA
+        final_pop, logbook, hof = run_improved_ga(toolbox, population_size, n_generations)
+        
+        # Get best chromosome from hall of fame
+        best_chrom = hof[0]
+        
+        # Build and train final model on combined data
+        best_gam = ImprovedGAMBuilder.build(best_chrom)
+        X_combined = np.vstack([X_train, X_val])
+        y_combined = np.hstack([y_train, y_val])
+        best_gam.fit(X_combined, y_combined)
+        
+        # Evaluate on test set
         preds = best_gam.predict(X_test)
         rmse_test = np.sqrt(mean_squared_error(y_test, preds))
-        print(f"Final Test RMSE: {rmse_test:.4f}")
+        print(f"Improved GA-GAM Test RMSE: {rmse_test:.4f}")
 
-        # Train/evaluate baselines on the same splits so results are comparable
+        # Train/evaluate baselines on the same splits
         decision_tree_model, pygam_model, rmse_dt, rmse_gam = test_baselines(
             X_train, X_val, X_test, y_train, y_val, y_test, seed=SEED
         )
 
+        print(f"Baseline PyGAM Test RMSE: {rmse_gam:.4f}")
+        print(f"Decision Tree Test RMSE: {rmse_dt:.4f}")
+
         # Visualize (per-seed file)
         models = [best_gam, decision_tree_model, pygam_model]
-        model_names = ["GA GAM", "Decision Tree", "Baseline PyGAM"]
+        model_names = ["Improved GA GAM", "Decision Tree", "Baseline PyGAM"]
         chromosomes = [best_chrom, None, None]
-        vis_path = f'outputs/feature_effects_seed{SEED}.png'
+        vis_path = f'outputs/improved_feature_effects_seed{SEED}.png'
         visualize_models(X_test, feature_names, models, model_names, chromosomes, vis_path)
 
         summary = summarize_structure(best_chrom, pygam_model.model, feature_names)
@@ -448,18 +400,19 @@ def main(seeds: Optional[List[int]] = None, population_size: int = 300, n_genera
             print(f"{feature}: {ftype}")
 
         # Save per-seed results to markdown
-        results_path = f"outputs/results_seed{SEED}.md"
+        results_path = f"outputs/improved_results_seed{SEED}.md"
         now = datetime.utcnow().isoformat() + "Z"
         md_lines = []
-        md_lines.append(f"# Run results — seed {SEED}\n")
+        md_lines.append(f"# Improved Run results — seed {SEED}\n")
         md_lines.append(f"- Date (UTC): {now}\n")
-        md_lines.append(f"- GA-GAM Final Test RMSE: {rmse_test:.4f}\n")
+        md_lines.append(f"- Improved GA-GAM Final Test RMSE: {rmse_test:.4f}\n")
         md_lines.append(f"- Decision Tree Test RMSE: {rmse_dt:.4f}\n")
         md_lines.append(f"- Baseline PyGAM Test RMSE: {rmse_gam:.4f}\n")
+        
         md_lines.append("\n## Generation Log\n")
-        md_lines.append("| Gen | Best Fitness |\n|---:|---:|\n")
-        for g, f in gen_logs:
-            md_lines.append(f"| {g} | {f:.6f} |\n")
+        md_lines.append("| Gen | Best Fitness | Average Fitness |\n|---:|---:|---:|\n")
+        for entry in logbook:
+            md_lines.append(f"| {entry['gen']} | {entry['max']:.6f} | {entry['avg']:.6f} |\n")
 
         md_lines.append("\n## Model Structure Summary\n")
         for feature, ftype in summary.items():
@@ -470,7 +423,7 @@ def main(seeds: Optional[List[int]] = None, population_size: int = 300, n_genera
             genes_json = json.dumps(best_chrom.genes, indent=2)
         except Exception:
             genes_json = str(best_chrom.genes)
-        md_lines.append("```")
+        md_lines.append("```json")
         md_lines.append(genes_json)
         md_lines.append("```")
 
@@ -485,25 +438,65 @@ def main(seeds: Optional[List[int]] = None, population_size: int = 300, n_genera
             "rmse_ga": float(rmse_test),
             "rmse_dt": float(rmse_dt),
             "rmse_gam": float(rmse_gam),
+            "improvement_over_baseline": float(rmse_gam - rmse_test),
             "vis": vis_path,
             "results_md": results_path,
         })
 
     # Write aggregate summary
     agg_lines = []
-    agg_lines.append("# Aggregate results for seeds\n")
-    agg_lines.append("| Seed | GA-GAM RMSE | DecisionTree RMSE | PyGAM RMSE | Results MD | Visualization |\n")
-    agg_lines.append("|---:|---:|---:|---:|---|---|\n")
+    agg_lines.append("# Improved Aggregate results for seeds\n")
+    agg_lines.append("| Seed | GA-GAM RMSE | DecisionTree RMSE | PyGAM RMSE | Improvement | Results MD | Visualization |\n")
+    agg_lines.append("|---:|---:|---:|---:|---:|---|---|\n")
     for r in aggregate_rows:
-        agg_lines.append(f"| {r['seed']} | {r['rmse_ga']:.4f} | {r['rmse_dt']:.4f} | {r['rmse_gam']:.4f} | {r['results_md']} | {r['vis']} |\n")
+        improvement = r['improvement_over_baseline']
+        improvement_text = f"{improvement:+.4f}" 
+        if improvement > 0:
+            improvement_text += " Success:"
+        else:
+            improvement_text += " Failure:"
+        agg_lines.append(f"| {r['seed']} | {r['rmse_ga']:.4f} | {r['rmse_dt']:.4f} | {r['rmse_gam']:.4f} | {improvement_text} | {r['results_md']} | {r['vis']} |\n")
+    
+    # Calculate average improvement
+    avg_improvement = np.mean([r['improvement_over_baseline'] for r in aggregate_rows])
+    agg_lines.append(f"\n**Average improvement over baseline PyGAM: {avg_improvement:+.4f}**\n")
+    
+    if avg_improvement > 0:
+        agg_lines.append("\n**SUCCESS: Improved GA-GAM outperforms baseline PyGAM on average!**\n")
+    else:
+        agg_lines.append("\n**Suggestion: Try increasing n_generations or adjusting hyperparameters.**\n")
 
     with open(aggregate_path, "w", encoding="utf-8") as f:
         f.write("\n".join(agg_lines))
 
     print(f"Saved aggregate results to {aggregate_path}")
+    return aggregate_rows
+
 # ------------------------------
-# 6. Main GA Runner
+# 6. Main Improved Runner
 # ------------------------------
 if __name__ == "__main__":
-
-    main(seeds = [42, 7, 123])  # Example seeds to run
+    # Run improved GA
+    print("=" * 60)
+    print("RUNNING IMPROVED GA-GAM")
+    print("=" * 60)
+    
+    improved_results = improved_main(seeds=[42, 7, 123], population_size=80, n_generations=80)
+    
+    # Print final summary
+    print("\n" + "=" * 60)
+    print("FINAL SUMMARY")
+    print("=" * 60)
+    for result in improved_results:
+        seed = result['seed']
+        improvement = result['improvement_over_baseline']
+        status = "Success" if improvement > 0 else "Failure"
+        print(f"Seed {seed}: {status} (Improvement: {improvement:+.4f})")
+    
+    avg_improvement = np.mean([r['improvement_over_baseline'] for r in improved_results])
+    print(f"\nOverall average improvement: {avg_improvement:+.4f}")
+    
+    if avg_improvement > 0:
+        print("SUCCESS: Improved GA-GAM consistently outperforms baseline PyGAM!")
+    else:
+        print("Not real improvements")
