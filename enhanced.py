@@ -2,6 +2,7 @@
 # Imports
 # ------------------------------
 import random
+from xml.parsers.expat import model
 import numpy as np
 from copy import deepcopy
 from sklearn.datasets import fetch_california_housing
@@ -185,7 +186,7 @@ class ImprovedGAMBuilder:
             for i in range(1, chromosome.n_features):
                 terms += s(i, n_splines=2, lam=1000.0)
                 
-        gam = LinearGAM(terms)
+        gam = LinearGAM(terms, max_iter=100)
         return gam
 
 # ------------------------------
@@ -194,16 +195,16 @@ class ImprovedGAMBuilder:
 class ImprovedGAMFitnessEvaluator:
     @staticmethod
     def evaluate(chromosome, X_train, y_train, X_val, y_val, 
-                 n_repeats=2, cv_folds=3):
+                 n_repeats=2, cv_folds=3, max_knots_per_feature=20):
         """
-        Improved fitness evaluation with cross-validation and AIC-like penalty
+        Improved fitness evaluation with cross-validation and normalized complexity penalty.
         """
         # Use cross-validation for more robust evaluation
         fold_scores = []
         X_combined = np.vstack([X_train, X_val])
         y_combined = np.hstack([y_train, y_val])
-        
         n_samples = len(X_combined)
+        n_features = X_train.shape[1]
         fold_size = n_samples // cv_folds
         
         for fold in range(cv_folds):
@@ -217,25 +218,19 @@ class ImprovedGAMFitnessEvaluator:
             y_train_fold = np.delete(y_combined, slice(val_start, val_end))
             
             try:
+                # Build and fit GAM
                 gam = ImprovedGAMBuilder.build(chromosome)
                 gam.fit(X_train_fold, y_train_fold)
+                
+                # Predict and compute RMSE
                 preds = gam.predict(X_val_fold)
                 rmse = np.sqrt(mean_squared_error(y_val_fold, preds))
                 
-                # Calculate AIC-like penalty based on model complexity
-                n_splines_total = 0
-                for term in gam.terms:
-                    if hasattr(term, 'n_splines'):
-                        n_splines_total += term.n_splines
-                
-                # Approximate effective parameters (degrees of freedom)
-                effective_params = gam.statistics_['edof']
-                
-                # AIC-like penalty
-                aic_penalty = (2 * effective_params) / len(X_val_fold)
+                # Compute normalized complexity penalty
+                penalty = complexity_penalty(gam, n_features=n_features, max_knots_per_feature=max_knots_per_feature)
                 
                 # Final fitness (higher is better)
-                fold_score = -rmse - aic_penalty
+                fold_score = -rmse - 0.5*penalty
                 fold_scores.append(fold_score)
                 
             except Exception as e:
@@ -332,6 +327,31 @@ def summarize_structure(chromosome, gam_model, feature_names):
                 term_idx += 1
     return summary
 
+def complexity_penalty(model, n_features, max_knots_per_feature):
+    # Total splines used
+    total_knots = 0
+    active_features = 0
+    for term in model.terms:
+        if hasattr(term, "n_splines") and term.n_splines > 1:
+            total_knots += term.n_splines
+            active_features += 1
+
+    # Maximum possible knots
+    max_total_knots = n_features * max_knots_per_feature
+
+    # Effective degrees of freedom
+    total_edof = model.statistics_["edof"]
+    max_edof = sum(term.n_coefs - 1 for term in model.terms)
+
+    # Normalized components
+    norm_knots = total_knots / max_total_knots
+    norm_edof = total_edof / max_edof
+    norm_features = active_features / n_features
+
+    # Total penalty (average of three components)
+    penalty = (norm_knots + norm_edof + norm_features) / 3.0
+    return penalty
+
 def improved_main(seeds: Optional[List[int]] = None, population_size: int = 80, n_generations: int = 80):
     """Run the improved GA once per seed in `seeds` and save per-seed and aggregate md."""
     # Determine seeds from env or function arg
@@ -387,11 +407,17 @@ def improved_main(seeds: Optional[List[int]] = None, population_size: int = 80, 
         print(f"Baseline PyGAM Test RMSE: {rmse_gam:.4f}")
         print(f"Decision Tree Test RMSE: {rmse_dt:.4f}")
 
+
+        complexity_penalty_value = complexity_penalty(pygam_model.model, n_features, max_knots_per_feature=20)
+        print(f"Complexity Penalty for baseline: {complexity_penalty_value:.4f}")
+        complexity_penalty_value_improved = complexity_penalty(best_gam, n_features, max_knots_per_feature=20)
+        print(f"Complexity Penalty for improved GA-GAM: {complexity_penalty_value_improved:.4f}")
+
         # Visualize (per-seed file)
         models = [best_gam, decision_tree_model, pygam_model]
         model_names = ["Improved GA GAM", "Decision Tree", "Baseline PyGAM"]
         chromosomes = [best_chrom, None, None]
-        vis_path = f'outputs/improved_feature_effects_seed{SEED}.png'
+        vis_path = f'outputs/improved_feature_effects_seed{SEED}'
         visualize_models(X_test, feature_names, models, model_names, chromosomes, vis_path)
 
         summary = summarize_structure(best_chrom, pygam_model.model, feature_names)
@@ -481,7 +507,7 @@ if __name__ == "__main__":
     print("RUNNING IMPROVED GA-GAM")
     print("=" * 60)
     
-    improved_results = improved_main(seeds=[42, 7, 123,225,729], population_size=80, n_generations=50)
+    improved_results = improved_main(seeds=[42, 7, 123,225,729], population_size=80, n_generations=20)
     
     # Print final summary
     print("\n" + "=" * 60)
