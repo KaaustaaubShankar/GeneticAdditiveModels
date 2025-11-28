@@ -59,7 +59,16 @@ def visualize_models(X, feature_names, models, model_names, chromosomes, output_
                         lam = gene.get("lambda")
                         annotation = f"knots: {k}\nλ={lam:.3g}"
                     elif gene.get("type") == "linear":
-                        annotation = "linear"
+                        # Get actual lambda from the fitted GAM term
+                        try:
+                            term = model.terms[term_idx]
+                            lam_val = term.lam
+                            if isinstance(lam_val, (list, np.ndarray)):
+                                lam_val = float(np.mean(lam_val))
+                            annotation = f"linear\nλ={lam_val:.2g}"
+                        except Exception:
+                            annotation = "linear"
+
                     else:
                         annotation = "none"
 

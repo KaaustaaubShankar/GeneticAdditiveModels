@@ -181,3 +181,5 @@ cython_debug/
 .cursorindexingignore
 
 .DS_Store
+/no_none_outputs
+/none_save_outputs
