@@ -1,14 +1,3 @@
-# improved_ga_gam_with_uncertainty_penalty.py
-# Full script integrating an uncertainty + sparsity penalty (Option A)
-# Uses NSGA-II style multi-objective GA to optimize (RMSE, Penalty)
-# Penalty = weighted combination of mean CI width (primary) and sparsity (secondary).
-#
-# Notes:
-#  - This is a single-file integration based on your previous code.
-#  - The uncertainty penalty uses model.partial_dependence(...) CIs when available.
-#  - If partial_dependence fails for a term, that term contributes a high penalty (conservative).
-#  - RMSE is normalized inside evaluator to stabilize scale across folds.
-
 import random
 from copy import deepcopy
 import numpy as np
