@@ -375,8 +375,8 @@ def pick_knee_solution(pop):
     r = (rmses - rmses.min()) / (rmses.max() - rmses.min() + 1e-8)
     p = (pens  - pens.min())  / (pens.max()  - pens.min()  + 1e-8)
 
-    # Weights taken from DEAP fitness weighting (-3, -1)
-    w_rmse = 3.0
+    # Weights taken from DEAP fitness weighting
+    w_rmse = 1.0
     w_pen  = 1.0
 
     # Weighted distance to ideal point (0,0)
